@@ -607,9 +607,29 @@ print_success ".gitignore created"
 
 # Create GitHub repository
 print_step "Creating GitHub repository..."
-gh repo create "$GITHUB_REPO" --public --source=. --remote=origin
 
-print_success "GitHub repository created"
+if gh repo view "$GITHUB_REPO" &>/dev/null; then
+    print_warning "Repository $GITHUB_REPO already exists"
+
+    # Check if remote already exists
+    if git remote get-url origin &>/dev/null; then
+        print_info "Git remote 'origin' already configured"
+    else
+        print_step "Adding existing repository as remote..."
+        gh repo set-default "$GITHUB_REPO"
+        git remote add origin "git@github.com:$GITHUB_REPO.git"
+        print_success "Remote added"
+    fi
+else
+    # Create new repository
+    if gh repo create "$GITHUB_REPO" --public --source=. --remote=origin; then
+        print_success "GitHub repository created"
+    else
+        print_error "Failed to create GitHub repository"
+        print_info "You can create it manually and add remote:"
+        print_info "  git remote add origin git@github.com:$GITHUB_REPO.git"
+    fi
+fi
 
 # ============================================================================
 # STEP 8: Initial Commit
@@ -648,48 +668,182 @@ print_success "Code pushed to GitHub!"
 
 print_header "🎉 Setup Complete!"
 
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${CYAN}📊 EXECUTION SUMMARY${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Track what succeeded and what needs attention
+COMPLETED_STEPS=()
+WARNING_STEPS=()
+FAILED_STEPS=()
+
+# Step 1: Prerequisites
+COMPLETED_STEPS+=("✅ Prerequisites checked and validated")
+
+# Step 2: Configuration
+COMPLETED_STEPS+=("✅ Project configuration collected")
+
+# Step 3: Flutter project
+if [ -d "$PROJECT_PATH" ]; then
+    COMPLETED_STEPS+=("✅ Flutter project created at: $PROJECT_PATH")
+else
+    FAILED_STEPS+=("❌ Flutter project creation failed")
+fi
+
+# Step 4: Project structure
+if [ -d "$PROJECT_PATH/lib/config" ]; then
+    COMPLETED_STEPS+=("✅ Project structure and templates copied")
+else
+    WARNING_STEPS+=("⚠️  Project structure may be incomplete")
+fi
+
+# Step 5: Flavors
+if [ -f "$PROJECT_PATH/lib/main_dev.dart" ]; then
+    COMPLETED_STEPS+=("✅ Flavors configured (dev, staging, prod)")
+else
+    WARNING_STEPS+=("⚠️  Flavor configuration may be incomplete")
+fi
+
+# Step 6: Firebase setup
+if [[ "$USE_IAC" == "true" ]]; then
+    if [ -f "$PROJECT_PATH/firebase-outputs.json" ]; then
+        COMPLETED_STEPS+=("✅ Firebase projects created via Infrastructure as Code")
+        COMPLETED_STEPS+=("   → ${FIREBASE_PROJECT_BASE}-dev")
+        COMPLETED_STEPS+=("   → ${FIREBASE_PROJECT_BASE}-staging")
+        COMPLETED_STEPS+=("   → ${FIREBASE_PROJECT_BASE}-prod")
+    else
+        FAILED_STEPS+=("❌ Firebase IaC deployment failed or incomplete")
+        WARNING_STEPS+=("⚠️  You may need to run infrastructure setup manually:")
+        WARNING_STEPS+=("   → ./scripts/setup-firebase-infrastructure.sh")
+    fi
+else
+    WARNING_STEPS+=("⚠️  Firebase projects NOT created (IaC not used)")
+    WARNING_STEPS+=("   → Manual setup required - see FIREBASE_SETUP_INSTRUCTIONS.md")
+fi
+
+# Step 7: GitHub
+if [ -d "$PROJECT_PATH/.git" ]; then
+    COMPLETED_STEPS+=("✅ Git repository initialized")
+else
+    FAILED_STEPS+=("❌ Git repository initialization failed")
+fi
+
+# Check if GitHub repo exists
+if gh repo view "$GITHUB_REPO" &>/dev/null; then
+    COMPLETED_STEPS+=("✅ GitHub repository: https://github.com/$GITHUB_REPO")
+else
+    WARNING_STEPS+=("⚠️  GitHub repository may not be created")
+fi
+
+# Step 8: Initial commit
+if git -C "$PROJECT_PATH" log --oneline 2>/dev/null | head -n 1 > /dev/null; then
+    COMPLETED_STEPS+=("✅ Initial commit created")
+else
+    WARNING_STEPS+=("⚠️  Initial commit may not be created")
+fi
+
+# Step 9: Push to GitHub
+if git -C "$PROJECT_PATH" remote get-url origin &>/dev/null; then
+    COMPLETED_STEPS+=("✅ GitHub remote configured")
+    # Check if pushed
+    if git -C "$PROJECT_PATH" branch -r | grep -q "origin/main"; then
+        COMPLETED_STEPS+=("✅ Code pushed to GitHub")
+    else
+        WARNING_STEPS+=("⚠️  Code may not be pushed to GitHub yet")
+    fi
+else
+    WARNING_STEPS+=("⚠️  GitHub remote not configured")
+fi
+
+# Print completed steps
+echo -e "${GREEN}✅ COMPLETED:${NC}"
+echo ""
+for step in "${COMPLETED_STEPS[@]}"; do
+    echo -e "  $step"
+done
+
+# Print warnings if any
+if [ ${#WARNING_STEPS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}⚠️  WARNINGS / MANUAL STEPS NEEDED:${NC}"
+    echo ""
+    for step in "${WARNING_STEPS[@]}"; do
+        echo -e "  $step"
+    done
+fi
+
+# Print failures if any
+if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${RED}❌ FAILED:${NC}"
+    echo ""
+    for step in "${FAILED_STEPS[@]}"; do
+        echo -e "  $step"
+    done
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Final status
+if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${RED}❌ SETUP COMPLETED WITH ERRORS${NC}"
+    echo ""
+    echo -e "${YELLOW}Some steps failed. Please review the errors above and fix them manually.${NC}"
+    echo ""
+elif [ ${#WARNING_STEPS[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}⚠️  SETUP COMPLETED WITH WARNINGS${NC}"
+    echo ""
+    echo -e "${YELLOW}Some steps require manual action. Please review the warnings above.${NC}"
+    echo ""
+else
+    echo ""
+    echo -e "${GREEN}✅ ✨ ALL DONE! SETUP COMPLETED SUCCESSFULLY! ✨ ✅${NC}"
+    echo ""
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Project details
 cat << EOF
+${CYAN}📁 Project Details:${NC}
+   Name:     $PROJECT_NAME
+   Location: $PROJECT_PATH
+   GitHub:   https://github.com/$GITHUB_REPO
 
-${GREEN}✅ Your Flutter + Firebase project is ready!${NC}
+${CYAN}🔥 Firebase Projects:${NC}
+   ${FIREBASE_PROJECT_BASE}-dev
+   ${FIREBASE_PROJECT_BASE}-staging
+   ${FIREBASE_PROJECT_BASE}-prod
 
-${CYAN}📁 Project:${NC} $PROJECT_NAME
-${CYAN}📍 Location:${NC} $(pwd)
-${CYAN}🔗 GitHub:${NC} https://github.com/$GITHUB_REPO
-
-${YELLOW}🔥 Firebase Projects:${NC}
-   - ${FIREBASE_PROJECT_BASE}-dev
-   - ${FIREBASE_PROJECT_BASE}-staging
-   - ${FIREBASE_PROJECT_BASE}-prod
-
-${YELLOW}📱 Configured Platforms:${NC}
-   ✅ Android (3 flavors)
-   ✅ iOS (3 schemes)
+${CYAN}📱 Configured Platforms:${NC}
+   ✅ Android (3 flavors: dev, staging, prod)
+   ✅ iOS (3 schemes: dev, staging, prod)
    ✅ Web
-   ✅ Linux
-   ✅ macOS
-   ✅ Windows
+   ✅ Linux, macOS, Windows
 
 ${YELLOW}🚀 Next Steps:${NC}
 
 ${PURPLE}1. Install dependencies:${NC}
-   ${CYAN}flutter pub get${NC}
+   cd $PROJECT_PATH
+   flutter pub get
 
 ${PURPLE}2. Run the app (dev environment):${NC}
-   ${CYAN}flutter run --flavor dev -t lib/main_dev.dart${NC}
+   flutter run --flavor dev -t lib/main_dev.dart
 
 ${PURPLE}3. Test everything works:${NC}
-   ${CYAN}flutter test${NC}
+   flutter test
 
-${PURPLE}4. Build for Android:${NC}
-   ${CYAN}flutter build apk --flavor dev${NC}
+${PURPLE}4. Build for production:${NC}
+   flutter build apk --flavor prod
 
 ${PURPLE}5. Monitor CI/CD:${NC}
-   ${CYAN}https://github.com/$GITHUB_REPO/actions${NC}
-
-${BLUE}📚 Documentation:${NC}
-   - README.md - Project overview
-   - FIREBASE_SETUP_INSTRUCTIONS.md - Firebase setup guide
-   - .github/workflows/ - CI/CD workflows
+   https://github.com/$GITHUB_REPO/actions
 
 ${BLUE}🎯 Quick Commands:${NC}
 
@@ -701,30 +855,41 @@ ${BLUE}🎯 Quick Commands:${NC}
    ${PURPLE}Format:${NC}         dart format .
    ${PURPLE}Analyze:${NC}        flutter analyze
 
-   ${PURPLE}Build Android:${NC}  flutter build apk --flavor prod
-   ${PURPLE}Build iOS:${NC}      flutter build ios --flavor prod
-   ${PURPLE}Build Web:${NC}      flutter build web --release
+${BLUE}📚 Documentation:${NC}
+   - README.md - Project overview
+   - FIREBASE_SETUP_INSTRUCTIONS.md - Firebase setup (if IaC not used)
+   - .github/workflows/ - CI/CD workflows
 
 ${GREEN}🎊 Happy Coding!${NC}
 
 EOF
 
-# Offer to open in editor
-echo -e "${YELLOW}Open project in VS Code? (y/n)${NC}"
-read -p "> " OPEN_VSCODE
+# Offer to open in editor (skip if auto-confirm)
+if [[ "$AUTO_CONFIRM" != "true" ]]; then
+    echo -e "${YELLOW}Open project in VS Code? (y/n)${NC}"
+    read -p "> " OPEN_VSCODE
 
-if [[ "$OPEN_VSCODE" == "y" ]] && command -v code &> /dev/null; then
-    code .
-    print_success "Project opened in VS Code"
+    if [[ "$OPEN_VSCODE" == "y" ]] && command -v code &> /dev/null; then
+        code "$PROJECT_PATH"
+        print_success "Project opened in VS Code"
+    fi
+
+    # Offer to run the app
+    echo -e "\n${YELLOW}Run the app now (dev flavor)? (y/n)${NC}"
+    read -p "> " RUN_APP
+
+    if [[ "$RUN_APP" == "y" ]]; then
+        print_step "Starting Flutter app..."
+        cd "$PROJECT_PATH"
+        flutter run --flavor dev -t lib/main_dev.dart
+    fi
 fi
 
-# Offer to run the app
-echo -e "\n${YELLOW}Run the app now (dev flavor)? (y/n)${NC}"
-read -p "> " RUN_APP
-
-if [[ "$RUN_APP" == "y" ]]; then
-    print_step "Starting Flutter app..."
-    flutter run --flavor dev -t lib/main_dev.dart
+# Final message
+if [ ${#FAILED_STEPS[@]} -eq 0 ]; then
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✨ ✅ DONE! Your Flutter + Firebase project is ready! ✅ ✨${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
 fi
-
-echo -e "\n${GREEN}✨ Setup completed successfully!${NC}\n"

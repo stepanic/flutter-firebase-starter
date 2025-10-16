@@ -42,7 +42,8 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
   const allConfig: Record<string, { value: string; secret?: boolean }> = {
     [`${projectName}:projectBaseName`]: { value: options.projectBaseName },
     [`${projectName}:organization`]: { value: options.organization },
-    [`${projectName}:environments`]: { value: JSON.stringify(options.environments) },
+    // Don't set environments via setAllConfig - it expects string but schema wants array
+    // We'll write it directly to the stack config file below
     [`${projectName}:githubRepo`]: { value: options.githubRepo },
     [`${projectName}:androidPackageName`]: { value: options.androidPackageName },
     [`${projectName}:iosBundleId`]: { value: options.iosBundleId },
@@ -70,6 +71,26 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
 
   // Set all config at once
   await stack.setAllConfig(allConfig);
+
+  // Now manually write the environments array to the stack config file as proper YAML array
+  const yaml = require('js-yaml');
+  const stackConfigFile = path.join(stack.workspace.workDir, `Pulumi.${stack.name}.yaml`);
+
+  try {
+    // Read existing config
+    const configYaml = fs.readFileSync(stackConfigFile, 'utf8');
+    const configData: any = yaml.load(configYaml) || { config: {} };
+
+    // Set environments as actual array (not string)
+    configData.config[`${projectName}:environments`] = options.environments;
+
+    // Write back
+    fs.writeFileSync(stackConfigFile, yaml.dump(configData, { indent: 2 }));
+    console.log('   └─ Environments array written to stack config');
+  } catch (err) {
+    console.error('Failed to write environments to stack config:', err);
+    throw err;
+  }
 
   console.log('✅ Stack configured');
 }

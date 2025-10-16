@@ -66,7 +66,29 @@ print_success "All prerequisites met!"
 
 print_header "Step 2: Project Configuration"
 
+# Target directory
+print_step "Where do you want to create the project?"
+print_info "Examples:"
+print_info "  . (current directory)"
+print_info "  .. (parent directory)"
+print_info "  ~/projects (absolute path)"
+print_info "  /Users/username/projects (absolute path)"
+echo ""
+read -p "Target directory [default: ..]: " TARGET_DIR
+
+# Default to parent directory if empty
+if [[ -z "$TARGET_DIR" ]]; then
+    TARGET_DIR=".."
+fi
+
+# Expand tilde and make absolute path
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+TARGET_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd || echo "$TARGET_DIR")"
+
+print_info "Projects will be created in: $TARGET_DIR"
+
 # Project name
+echo ""
 print_step "Enter project name (lowercase, underscores only):"
 read -p "> " PROJECT_NAME
 validate_project_name "$PROJECT_NAME"
@@ -122,12 +144,22 @@ fi
 
 print_header "Step 3: Creating Flutter Project"
 
-if [ -d "$PROJECT_NAME" ]; then
-    print_error "Directory $PROJECT_NAME already exists!"
+# Full path to new project
+PROJECT_PATH="$TARGET_DIR/$PROJECT_NAME"
+
+if [ -d "$PROJECT_PATH" ]; then
+    print_error "Directory $PROJECT_PATH already exists!"
     exit 1
 fi
 
-print_step "Creating Flutter project with all platforms..."
+# Create target directory if it doesn't exist
+mkdir -p "$TARGET_DIR"
+
+print_step "Creating Flutter project in: $PROJECT_PATH"
+print_info "This may take 1-2 minutes..."
+
+cd "$TARGET_DIR"
+
 flutter create \
     --org "$ORGANIZATION" \
     --description "$DESCRIPTION" \
@@ -135,7 +167,7 @@ flutter create \
     "$PROJECT_NAME"
 
 cd "$PROJECT_NAME"
-print_success "Flutter project created!"
+print_success "Flutter project created at: $(pwd)"
 
 # ============================================================================
 # STEP 4: Setup Project Structure
@@ -208,9 +240,9 @@ if [[ "$USE_IAC" == "true" ]]; then
     pulumi up --yes --skip-preview
 
     # Export outputs to files
-    pulumi stack output --json > "$ROOT_DIR/$PROJECT_NAME/firebase-outputs.json"
+    pulumi stack output --json > "$PROJECT_PATH/firebase-outputs.json"
 
-    cd "$ROOT_DIR/$PROJECT_NAME"
+    cd "$PROJECT_PATH"
 
     print_success "Firebase projects created via IaC!"
     print_info "Firebase configurations saved to firebase-outputs.json"

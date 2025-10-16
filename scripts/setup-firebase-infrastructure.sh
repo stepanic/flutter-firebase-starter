@@ -191,84 +191,66 @@ else
 fi
 
 # ============================================================================
-# Initialize Pulumi stack
+# Create configuration file for TypeScript CLI
 # ============================================================================
 
-STACK_NAME="${PROJECT_NAME}-infra"
+print_step "Preparing deployment configuration..."
 
-print_step "Initializing Pulumi stack: $STACK_NAME"
-
-# Try to create or select stack
-if pulumi stack select "$STACK_NAME" --non-interactive 2>/dev/null; then
-    print_success "Using existing stack: $STACK_NAME"
-elif pulumi stack init "$STACK_NAME" --non-interactive 2>/dev/null; then
-    print_success "Created new stack: $STACK_NAME"
-elif pulumi stack select "$PULUMI_USER/$STACK_NAME" --non-interactive 2>/dev/null; then
-    print_success "Using existing stack: $PULUMI_USER/$STACK_NAME"
-elif pulumi stack init "$PULUMI_USER/$STACK_NAME" --non-interactive 2>/dev/null; then
-    print_success "Created new stack: $PULUMI_USER/$STACK_NAME"
-else
-    print_error "Failed to create or select Pulumi stack"
-    exit 1
-fi
-
-# ============================================================================
-# Configure Pulumi stack
-# ============================================================================
-
-print_step "Configuring Pulumi stack..."
-
-# Required configs
-pulumi config set projectBaseName "$FIREBASE_PROJECT_BASE"
-pulumi config set organization "$ORGANIZATION"
-
-# Set environments as JSON array
-# Convert comma-separated to proper JSON array
+# Convert comma-separated environments to JSON array
 IFS=',' read -ra ENV_ARRAY <<< "$ENVIRONMENTS"
-ENVS_JSON=$(printf '%s\n' "${ENV_ARRAY[@]}" | jq -R . | jq -s -c .)
-echo "$ENVS_JSON" | pulumi config set environments --
-
-pulumi config set githubRepo "$GITHUB_REPO"
-pulumi config set androidPackageName "$ANDROID_PACKAGE"
-pulumi config set iosBundleId "$IOS_BUNDLE"
-
-# Optional configs (only set if provided)
-if [[ -n "$GCP_BILLING_ACCOUNT" ]]; then
-    pulumi config set gcpBillingAccount "$GCP_BILLING_ACCOUNT" --secret
-fi
-
-if [[ -n "$GCP_ORG_ID" ]]; then
-    pulumi config set gcpOrganizationId "$GCP_ORG_ID"
-fi
-
-# Feature flags (defaults to true)
-pulumi config set enableAuth true
-pulumi config set enableFirestore true
-pulumi config set enableFunctions true
-pulumi config set enableStorage true
-pulumi config set enableHosting false
-
-# Regions
-pulumi config set firestoreRegion "$FIRESTORE_REGION"
-pulumi config set firebaseFunctionsRegion "$FUNCTIONS_REGION"
+ENVS_JSON="["
+FIRST=true
+for env in "${ENV_ARRAY[@]}"; do
+    if [ "$FIRST" = true ]; then
+        ENVS_JSON+="\"$env\""
+        FIRST=false
+    else
+        ENVS_JSON+=",\"$env\""
+    fi
+done
+ENVS_JSON+="]"
 
 # Get GitHub token
 GITHUB_TOKEN=$(gh auth token 2>/dev/null || echo "")
-if [[ -n "$GITHUB_TOKEN" ]]; then
-    pulumi config set githubToken "$GITHUB_TOKEN" --secret
-else
+if [[ -z "$GITHUB_TOKEN" ]]; then
     print_warning "GitHub token not found, GitHub secrets won't be configured"
 fi
 
-print_success "Configuration complete"
+# Create temporary config file for TypeScript CLI
+CONFIG_FILE=$(mktemp)
+cat > "$CONFIG_FILE" << EOF
+{
+  "projectBaseName": "$FIREBASE_PROJECT_BASE",
+  "organization": "$ORGANIZATION",
+  "environments": $ENVS_JSON,
+  "githubRepo": "$GITHUB_REPO",
+  "androidPackageName": "$ANDROID_PACKAGE",
+  "iosBundleId": "$IOS_BUNDLE",
+  "gcpBillingAccount": "$GCP_BILLING_ACCOUNT",
+  "gcpOrganizationId": "$GCP_ORG_ID",
+  "githubToken": "$GITHUB_TOKEN",
+  "firestoreRegion": "$FIRESTORE_REGION",
+  "firebaseFunctionsRegion": "$FUNCTIONS_REGION",
+  "enableAuth": true,
+  "enableFirestore": true,
+  "enableFunctions": true,
+  "enableStorage": true,
+  "enableHosting": false
+}
+EOF
 
-# ============================================================================
-# Show configuration
-# ============================================================================
+print_success "Configuration prepared"
 
 echo ""
-print_step "Current stack configuration:"
-pulumi config --show-secrets
+print_info "Configuration summary:"
+echo "  Project Base:       $FIREBASE_PROJECT_BASE"
+echo "  Organization:       $ORGANIZATION"
+echo "  Environments:       ${ENV_ARRAY[@]}"
+echo "  GitHub Repo:        $GITHUB_REPO"
+echo "  Firestore Region:   $FIRESTORE_REGION"
+echo "  Functions Region:   $FUNCTIONS_REGION"
+[[ -n "$GCP_BILLING_ACCOUNT" ]] && echo "  Billing Account:    $GCP_BILLING_ACCOUNT"
+[[ -n "$GCP_ORG_ID" ]] && echo "  GCP Org ID:         $GCP_ORG_ID"
 
 echo ""
 print_warning "Review the configuration above before proceeding"
@@ -277,50 +259,22 @@ read -p "Continue with deployment? (y/n): " CONFIRM
 
 if [[ "$CONFIRM" != "y" ]]; then
     print_warning "Deployment cancelled"
+    rm -f "$CONFIG_FILE"
     exit 0
 fi
 
 # ============================================================================
-# Deploy infrastructure
+# Deploy infrastructure using TypeScript CLI
 # ============================================================================
 
-print_step "Deploying Firebase infrastructure (this may take 5-10 minutes)..."
+print_step "Deploying Firebase infrastructure using TypeScript CLI..."
 echo ""
 
-pulumi up --yes
+# Run TypeScript CLI
+npm run cli deploy "$CONFIG_FILE"
 
-# ============================================================================
-# Export outputs
-# ============================================================================
-
-print_step "Exporting outputs..."
-
-OUTPUT_FILE="$ROOT_DIR/firebase-infrastructure-outputs.json"
-pulumi stack output --json > "$OUTPUT_FILE"
-
-print_success "Outputs saved to: $OUTPUT_FILE"
-
-# ============================================================================
-# Summary
-# ============================================================================
-
-print_header "🎉 Infrastructure Deployment Complete!"
+# Clean up temp file
+rm -f "$CONFIG_FILE"
 
 echo ""
-echo "Firebase projects created:"
-for env in $(echo $ENVIRONMENTS | tr ',' ' '); do
-    echo "  ✅ ${FIREBASE_PROJECT_BASE}-${env}"
-done
-
-echo ""
-echo "Outputs exported to:"
-echo "  📄 $OUTPUT_FILE"
-
-echo ""
-echo "Next steps:"
-echo "  1. Review outputs: cat $OUTPUT_FILE | jq"
-echo "  2. Copy Firebase config files to your Flutter project"
-echo "  3. Run your Flutter app: flutter run --flavor dev"
-
-echo ""
-print_success "All done! 🚀"
+print_success "Deployment complete! Check the output above for details."

@@ -10,7 +10,8 @@
     "destroy": "pulumi destroy",
     "refresh": "pulumi refresh",
     "stack:init": "pulumi stack init",
-    "stack:select": "pulumi stack select"
+    "stack:select": "pulumi stack select",
+    "cli": "ts-node cli.ts"
   },
   "keywords": [
     "pulumi",
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
   }
 }

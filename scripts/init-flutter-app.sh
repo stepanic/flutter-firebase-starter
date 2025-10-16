@@ -139,13 +139,35 @@ check_command "gcloud" "Google Cloud SDK"
 check_command "firebase" "Firebase CLI"
 
 # Optional: Check for Pulumi
-USE_IAC=false
-if check_command_optional "pulumi" "Pulumi"; then
-    echo -e "\n${YELLOW}Use Infrastructure as Code (Pulumi) for Firebase setup? (y/n)${NC}"
-    read -p "> " USE_IAC_INPUT
-    if [[ "$USE_IAC_INPUT" == "y" ]]; then
-        USE_IAC=true
-        print_success "Will use Pulumi for automated Firebase setup"
+if [[ -z "$USE_IAC" ]]; then
+    USE_IAC=false
+    if check_command_optional "pulumi" "Pulumi"; then
+        echo -e "\n${YELLOW}Use Infrastructure as Code (Pulumi) for Firebase setup? (y/n)${NC}"
+        read -p "> " USE_IAC_INPUT
+        if [[ "$USE_IAC_INPUT" == "y" ]]; then
+            USE_IAC=true
+            print_success "Will use Pulumi for automated Firebase setup"
+
+            # Check Pulumi login
+            if ! pulumi whoami &>/dev/null; then
+                print_warning "Not logged into Pulumi"
+                echo ""
+                echo -e "${YELLOW}Choose Pulumi backend:${NC}"
+                echo "  1) Pulumi Cloud (requires account at app.pulumi.com)"
+                echo "  2) Local backend (no account needed, state stored locally)"
+                echo ""
+                read -p "Choice [1 or 2]: " PULUMI_CHOICE
+
+                if [[ "$PULUMI_CHOICE" == "2" ]]; then
+                    print_step "Using local Pulumi backend..."
+                    pulumi login --local
+                    print_success "Pulumi configured with local backend"
+                else
+                    print_step "Login to Pulumi Cloud..."
+                    pulumi login
+                fi
+            fi
+        fi
     fi
 fi
 
@@ -326,10 +348,47 @@ if [[ "$USE_IAC" == "true" ]]; then
     cd "$ROOT_DIR/infrastructure/pulumi"
 
     # Install dependencies
+    print_step "Installing Pulumi dependencies..."
     npm install
 
-    # Initialize Pulumi stack
-    pulumi stack init "${PROJECT_NAME}-infra" --non-interactive || pulumi stack select "${PROJECT_NAME}-infra"
+    # Get current Pulumi user
+    PULUMI_USER=$(pulumi whoami 2>/dev/null || echo "")
+
+    if [[ -z "$PULUMI_USER" ]]; then
+        print_error "Not logged into Pulumi!"
+        print_info "Please run: pulumi login"
+        exit 1
+    fi
+
+    print_info "Pulumi user: $PULUMI_USER"
+
+    # Initialize Pulumi stack (local backend or personal account)
+    STACK_NAME="${PROJECT_NAME}-infra"
+
+    print_step "Initializing Pulumi stack: $STACK_NAME"
+
+    # Try to create stack, if it fails, try to select it
+    if pulumi stack init "$STACK_NAME" --non-interactive 2>/dev/null; then
+        print_success "Pulumi stack created: $STACK_NAME"
+    elif pulumi stack select "$STACK_NAME" --non-interactive 2>/dev/null; then
+        print_success "Using existing Pulumi stack: $STACK_NAME"
+    else
+        print_error "Failed to create or select Pulumi stack"
+        print_info "Trying with full stack name: $PULUMI_USER/$STACK_NAME"
+
+        # Try with user prefix
+        if pulumi stack init "$PULUMI_USER/$STACK_NAME" --non-interactive 2>/dev/null; then
+            print_success "Pulumi stack created: $PULUMI_USER/$STACK_NAME"
+        elif pulumi stack select "$PULUMI_USER/$STACK_NAME" --non-interactive 2>/dev/null; then
+            print_success "Using existing stack: $PULUMI_USER/$STACK_NAME"
+        else
+            print_error "Cannot create Pulumi stack"
+            print_info "You may need to:"
+            print_info "  1. Check Pulumi login: pulumi whoami"
+            print_info "  2. Or use local backend: pulumi login --local"
+            exit 1
+        fi
+    fi
 
     # Set configuration
     pulumi config set projectBaseName "$FIREBASE_PROJECT_BASE"

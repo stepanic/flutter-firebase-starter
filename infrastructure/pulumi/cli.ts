@@ -72,16 +72,14 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
 
 async function deploy(options: DeployOptions): Promise<void> {
   const stackName = `${options.projectBaseName}-infra`;
-  const projectName = 'firebase-infrastructure';
   const workDir = path.join(__dirname);
 
   console.log(`\n🚀 Starting deployment for stack: ${stackName}\n`);
 
   try {
-    // Create or select stack
+    // Create or select stack using the working directory (where Pulumi.yaml exists)
     const stack = await LocalWorkspace.createOrSelectStack({
       stackName,
-      projectName,
       workDir,
     });
 
@@ -90,39 +88,71 @@ async function deploy(options: DeployOptions): Promise<void> {
     // Configure stack
     await configureStack(stack, options);
 
-    // Install dependencies
-    console.log('\n📦 Installing dependencies...');
-    await stack.workspace.installPluginDeps();
-
     // Show current configuration
-    console.log('\n📋 Current configuration:');
+    console.log('\n📋 Stack Configuration:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     const config = await stack.getAllConfig();
     for (const [key, value] of Object.entries(config)) {
       if (value.secret) {
-        console.log(`  ${key}: [secret]`);
+        console.log(`  🔐 ${key}: [secret]`);
       } else {
-        console.log(`  ${key}: ${value.value}`);
+        console.log(`  ⚙️  ${key}: ${value.value}`);
       }
     }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    // Show what will be created
+    console.log('🏗️  Infrastructure to be provisioned:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    for (const env of options.environments) {
+      console.log(`\n  📦 Environment: ${env.toUpperCase()}`);
+      console.log(`     └─ 🔥 Firebase Project: ${options.projectBaseName}-${env}`);
+      console.log(`     └─ 🌍 GCP Project ID: ${options.projectBaseName}-${env}`);
+      console.log(`     └─ 🔐 Firebase Authentication`);
+      if (options.enableFirestore !== false) {
+        console.log(`     └─ 📊 Cloud Firestore (region: ${options.firestoreRegion})`);
+      }
+      if (options.enableFunctions !== false) {
+        console.log(`     └─ ⚡ Cloud Functions (region: ${options.firebaseFunctionsRegion})`);
+      }
+      if (options.enableStorage !== false) {
+        console.log(`     └─ 📁 Cloud Storage`);
+      }
+      console.log(`     └─ 📱 Android App: ${options.androidPackageName}.${env}`);
+      console.log(`     └─ 🍎 iOS App: ${options.iosBundleId}.${env}`);
+    }
+    console.log('\n  🔗 GitHub Integration:');
+    console.log(`     └─ 📦 Repository: ${options.githubRepo}`);
+    console.log(`     └─ 🔑 Secrets: Firebase config, Service accounts, Android keys`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
     // Confirm deployment
-    console.log('\n⚠️  Review the configuration above before proceeding');
-    console.log('Starting deployment in 3 seconds... (Ctrl+C to cancel)\n');
+    console.log('⚠️  This will create real GCP resources and may incur costs.');
+    console.log('⏳ Starting deployment in 3 seconds... (Ctrl+C to cancel)\n');
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Deploy
-    console.log('▶️  Deploying Firebase infrastructure (this may take 5-10 minutes)...\n');
+    console.log('🚀 STARTING DEPLOYMENT');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log('📝 This may take 5-10 minutes. Live progress below:\n');
 
     const upResult = await stack.up({
       onOutput: (msg) => process.stdout.write(msg),
     });
 
-    console.log('\n✅ Deployment complete!');
-    console.log(`\n📊 Summary:`);
-    console.log(`  Resources created: ${upResult.summary.resourceChanges?.create || 0}`);
-    console.log(`  Resources updated: ${upResult.summary.resourceChanges?.update || 0}`);
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('✅ DEPLOYMENT COMPLETE!');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    console.log('📊 Resource Changes:');
+    const changes = upResult.summary.resourceChanges || {};
+    if (changes.create) console.log(`  ➕ Created: ${changes.create} resources`);
+    if (changes.update) console.log(`  🔄 Updated: ${changes.update} resources`);
+    if (changes.delete) console.log(`  ➖ Deleted: ${changes.delete} resources`);
+    if (changes.same) console.log(`  ⏸️  Unchanged: ${changes.same} resources`);
 
     // Export outputs
+    console.log('\n💾 Exporting outputs...');
     const outputs = await stack.outputs();
     const outputFile = path.join(workDir, '../../firebase-infrastructure-outputs.json');
 
@@ -132,15 +162,32 @@ async function deploy(options: DeployOptions): Promise<void> {
     }
 
     fs.writeFileSync(outputFile, JSON.stringify(outputData, null, 2));
-    console.log(`\n💾 Outputs saved to: ${outputFile}`);
+    console.log(`   └─ 📄 Saved to: ${outputFile}`);
 
-    // Print Firebase projects created
-    console.log('\n🔥 Firebase projects created:');
+    // Print detailed summary
+    console.log('\n🔥 Firebase Projects Created:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     for (const env of options.environments) {
-      console.log(`  ✅ ${options.projectBaseName}-${env}`);
+      const projectId = `${options.projectBaseName}-${env}`;
+      console.log(`\n  ✅ ${env.toUpperCase()} Environment`);
+      console.log(`     └─ 🆔 Project ID: ${projectId}`);
+      console.log(`     └─ 🌐 Console: https://console.firebase.google.com/project/${projectId}`);
+      console.log(`     └─ 📱 Android: ${options.androidPackageName}.${env}`);
+      console.log(`     └─ 🍎 iOS: ${options.iosBundleId}.${env}`);
     }
 
-    console.log('\n🎉 All done!\n');
+    console.log('\n🔗 GitHub Secrets Configured:');
+    console.log(`   └─ 📦 Repository: https://github.com/${options.githubRepo}`);
+    console.log(`   └─ 🔑 Secrets: https://github.com/${options.githubRepo}/settings/secrets/actions`);
+
+    console.log('\n📋 Next Steps:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('  1️⃣  Review outputs: cat firebase-infrastructure-outputs.json | jq');
+    console.log('  2️⃣  Copy Firebase config files to your Flutter project');
+    console.log('  3️⃣  Test your Flutter app: flutter run --flavor dev');
+    console.log('  4️⃣  Push to GitHub to trigger CI/CD workflows');
+
+    console.log('\n🎉 Infrastructure deployment completed successfully!\n');
 
   } catch (error) {
     console.error('\n❌ Deployment failed:');
@@ -150,7 +197,6 @@ async function deploy(options: DeployOptions): Promise<void> {
 }
 
 async function destroy(stackName: string): Promise<void> {
-  const projectName = 'firebase-infrastructure';
   const workDir = path.join(__dirname);
 
   console.log(`\n🗑️  Destroying stack: ${stackName}\n`);
@@ -158,7 +204,6 @@ async function destroy(stackName: string): Promise<void> {
   try {
     const stack = await LocalWorkspace.selectStack({
       stackName,
-      projectName,
       workDir,
     });
 

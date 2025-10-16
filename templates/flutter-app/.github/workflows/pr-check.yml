@@ -1,0 +1,212 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+# Cancel previous runs on new commits
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which platforms changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dart: ${{ steps.filter.outputs.dart }}
+      android: ${{ steps.filter.outputs.android }}
+      ios: ${{ steps.filter.outputs.ios }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            dart:
+              - 'lib/**'
+              - 'test/**'
+              - 'pubspec.yaml'
+            android:
+              - 'android/**'
+              - 'lib/**'
+            ios:
+              - 'ios/**'
+              - 'lib/**'
+            web:
+              - 'web/**'
+              - 'lib/**'
+
+  # Code analysis and tests
+  analyze:
+    needs: changes
+    if: needs.changes.outputs.dart == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔍 Analyze code
+        run: flutter analyze
+
+      - name: 📝 Check formatting
+        run: dart format --set-exit-if-changed .
+
+      - name: 🧪 Run tests
+        run: flutter test --coverage
+
+      - name: 📊 Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: coverage/lcov.info
+          fail_ci_if_error: false
+
+  # Build Android (dev flavor only for PR)
+  build-android:
+    needs: [changes, analyze]
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔨 Build APK (dev)
+        run: flutter build apk --flavor dev -t lib/main_dev.dart --debug
+
+      - name: 📤 Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-dev-debug.apk
+          path: build/app/outputs/flutter-apk/app-dev-debug.apk
+          retention-days: 7
+
+  # Build iOS (dev flavor only for PR)
+  build-ios:
+    needs: [changes, analyze]
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 📦 Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      - name: 🔨 Build iOS (dev, no codesign)
+        run: flutter build ios --flavor dev -t lib/main_dev.dart --debug --no-codesign
+
+      - name: 📊 Build summary
+        run: echo "✅ iOS build completed successfully"
+
+  # Build Web
+  build-web:
+    needs: [changes, analyze]
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔨 Build Web
+        run: flutter build web --release
+
+      - name: 📤 Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+          retention-days: 7
+
+  # Security scan
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔐 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📤 Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Summary
+  pr-check-complete:
+    needs: [analyze, build-android, build-ios, build-web, security]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ All checks passed
+        if: ${{ !contains(needs.*.result, 'failure') }}
+        run: echo "All PR checks passed successfully!"
+
+      - name: ❌ Some checks failed
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          echo "Some PR checks failed. Please review the logs above."
+          exit 1

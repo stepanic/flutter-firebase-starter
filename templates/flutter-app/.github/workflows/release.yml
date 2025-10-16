@@ -1,0 +1,341 @@
+name: Release Build & Deploy
+
+on:
+  push:
+    tags:
+      - 'v*-dev'      # v1.0.0-dev
+      - 'v*-staging'  # v1.0.0-staging
+      - 'v*-prod'     # v1.0.0-prod
+
+# Prevent concurrent builds
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Determine environment from tag
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.parse.outputs.environment }}
+      version: ${{ steps.parse.outputs.version }}
+      build_number: ${{ steps.parse.outputs.build_number }}
+    steps:
+      - name: 🏷️ Parse tag
+        id: parse
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Tag: $TAG"
+
+          # Extract environment (dev/staging/prod)
+          if [[ $TAG == *-dev ]]; then
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          elif [[ $TAG == *-staging ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          elif [[ $TAG == *-prod ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Invalid tag format. Use: v1.0.0-dev, v1.0.0-staging, or v1.0.0-prod"
+            exit 1
+          fi
+
+          # Extract version (e.g., v1.0.0-dev → 1.0.0)
+          VERSION=${TAG%-*}  # Remove environment suffix
+          VERSION=${VERSION#v}  # Remove v prefix
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Build number (using run number)
+          BUILD_NUMBER=${{ github.run_number }}
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+
+          echo "Environment: $(cat $GITHUB_OUTPUT | grep environment)"
+          echo "Version: $VERSION"
+          echo "Build number: $BUILD_NUMBER"
+
+  # Build Android
+  build-android:
+    needs: setup
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+      VERSION: ${{ needs.setup.outputs.version }}
+      BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔐 Decode Google Services JSON
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets[format('GOOGLE_SERVICES_JSON_{0}', needs.setup.outputs.environment)] }}
+        run: |
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > android/app/src/${{ env.ENVIRONMENT }}/google-services.json
+
+      - name: 🔑 Decode keystore
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          echo "$ANDROID_KEYSTORE" | base64 -d > android/app/keystore.jks
+
+      - name: 🔨 Build Android App Bundle
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          flutter build appbundle \
+            --flavor ${{ env.ENVIRONMENT }} \
+            -t lib/main_${{ env.ENVIRONMENT }}.dart \
+            --release \
+            --build-name=${{ env.VERSION }} \
+            --build-number=${{ env.BUILD_NUMBER }}
+
+      - name: 📤 Upload App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ env.ENVIRONMENT }}-release.aab
+          path: build/app/outputs/bundle/${{ env.ENVIRONMENT }}Release/app-${{ env.ENVIRONMENT }}-release.aab
+          retention-days: 30
+
+      - name: 🚀 Deploy to Play Store
+        if: env.ENVIRONMENT == 'prod' || env.ENVIRONMENT == 'staging'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          packageName: com.yourcompany.yourapp${{ env.ENVIRONMENT == 'prod' && '' || format('.{0}', env.ENVIRONMENT) }}
+          releaseFiles: build/app/outputs/bundle/${{ env.ENVIRONMENT }}Release/app-${{ env.ENVIRONMENT }}-release.aab
+          track: ${{ env.ENVIRONMENT == 'prod' && 'production' || 'internal' }}
+          status: completed
+
+  # Build iOS
+  build-ios:
+    needs: setup
+    runs-on: macos-latest
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+      VERSION: ${{ needs.setup.outputs.version }}
+      BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔐 Decode Google Services Plist
+        env:
+          GOOGLE_SERVICES_PLIST: ${{ secrets[format('GOOGLE_SERVICES_PLIST_{0}', needs.setup.outputs.environment)] }}
+        run: |
+          mkdir -p ios/Runner/${{ env.ENVIRONMENT }}
+          echo "$GOOGLE_SERVICES_PLIST" | base64 -d > ios/Runner/${{ env.ENVIRONMENT }}/GoogleService-Info.plist
+
+      - name: 🍎 Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: 📦 Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      - name: 🔑 Import Code Signing Certificates
+        uses: apple-actions/import-codesign-certs@v2
+        with:
+          p12-file-base64: ${{ secrets.IOS_BUILD_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.IOS_P12_PASSWORD }}
+
+      - name: 🔑 Install Provisioning Profile
+        env:
+          PROVISION_PROFILE: ${{ secrets[format('IOS_PROVISION_PROFILE_{0}', needs.setup.outputs.environment)] }}
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROVISION_PROFILE" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+
+      - name: 🔨 Build iOS IPA
+        run: |
+          flutter build ipa \
+            --flavor ${{ env.ENVIRONMENT }} \
+            -t lib/main_${{ env.ENVIRONMENT }}.dart \
+            --release \
+            --build-name=${{ env.VERSION }} \
+            --build-number=${{ env.BUILD_NUMBER }} \
+            --export-options-plist=ios/ExportOptions-${{ env.ENVIRONMENT }}.plist
+
+      - name: 📤 Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ env.ENVIRONMENT }}-release.ipa
+          path: build/ios/ipa/*.ipa
+          retention-days: 30
+
+      - name: 🚀 Deploy to TestFlight
+        if: env.ENVIRONMENT == 'prod' || env.ENVIRONMENT == 'staging'
+        uses: apple-actions/upload-testflight-build@v1
+        with:
+          app-path: build/ios/ipa/*.ipa
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+  # Build Web
+  build-web:
+    needs: setup
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+      VERSION: ${{ needs.setup.outputs.version }}
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get dependencies
+        run: flutter pub get
+
+      - name: 🔨 Build Web
+        run: |
+          flutter build web \
+            --release \
+            -t lib/main_${{ env.ENVIRONMENT }}.dart \
+            --web-renderer canvaskit
+
+      - name: 📤 Upload Web Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ env.ENVIRONMENT }}-release
+          path: build/web
+          retention-days: 30
+
+      - name: 🚀 Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets[format(''FIREBASE_SERVICE_ACCOUNT_{0}'', needs.setup.outputs.environment)] }}'
+          projectId: '${{ secrets[format(''FIREBASE_PROJECT_ID_{0}'', needs.setup.outputs.environment)] }}'
+          channelId: live
+          target: ${{ env.ENVIRONMENT }}
+
+  # Create GitHub Release
+  create-release:
+    needs: [setup, build-android, build-ios, build-web]
+    runs-on: ubuntu-latest
+    if: always() && !contains(needs.*.result, 'failure')
+
+    steps:
+      - name: 📚 Checkout
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-${{ needs.setup.outputs.environment }}-release.aab
+          path: artifacts/
+
+      - name: 📥 Download iOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-${{ needs.setup.outputs.environment }}-release.ipa
+          path: artifacts/
+
+      - name: 📥 Download Web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-${{ needs.setup.outputs.environment }}-release
+          path: artifacts/web/
+
+      - name: 📦 Create release archives
+        run: |
+          cd artifacts
+          zip -r web-${{ needs.setup.outputs.environment }}-release.zip web/
+
+      - name: 📝 Generate release notes
+        id: notes
+        run: |
+          cat > release_notes.md << EOF
+          # Release ${{ github.ref_name }}
+
+          ## Environment
+          **Environment:** \`${{ needs.setup.outputs.environment }}\`
+          **Version:** \`${{ needs.setup.outputs.version }}\`
+          **Build Number:** \`${{ needs.setup.outputs.build_number }}\`
+
+          ## What's Changed
+          $(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" --reverse)
+
+          ## Downloads
+          - 🤖 Android App Bundle (.aab)
+          - 🍎 iOS IPA
+          - 🌐 Web Build (zip)
+
+          ## Deployment Status
+          - ✅ Android: Play Store (${{ needs.setup.outputs.environment == 'prod' && 'Production' || 'Internal' }} track)
+          - ✅ iOS: TestFlight
+          - ✅ Web: Firebase Hosting
+
+          ---
+          *Built with ❤️ using Flutter Firebase Starter*
+          EOF
+
+      - name: 🎉 Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
+          files: |
+            artifacts/*.aab
+            artifacts/*.ipa
+            artifacts/*.zip
+          draft: false
+          prerelease: ${{ needs.setup.outputs.environment != 'prod' }}
+
+  # Notify on completion
+  notify:
+    needs: [setup, create-release]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: ✅ Success notification
+        if: ${{ !contains(needs.*.result, 'failure') }}
+        run: |
+          echo "🎉 Release ${{ github.ref_name }} completed successfully!"
+          echo "Environment: ${{ needs.setup.outputs.environment }}"
+          echo "Version: ${{ needs.setup.outputs.version }}"
+
+      - name: ❌ Failure notification
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          echo "❌ Release ${{ github.ref_name }} failed!"
+          exit 1

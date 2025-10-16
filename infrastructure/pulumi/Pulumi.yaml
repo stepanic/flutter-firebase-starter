@@ -1,0 +1,79 @@
+name: firebase-infrastructure
+runtime: nodejs
+description: Automated Firebase infrastructure for Flutter projects
+
+config:
+  # Project configuration
+  projectBaseName:
+    type: string
+    description: Base name for Firebase projects (e.g., "my-app")
+
+  organization:
+    type: string
+    description: Organization domain (e.g., "com.mycompany")
+
+  environments:
+    type: array
+    items:
+      type: string
+    default: ["dev", "staging", "prod"]
+    description: List of environments to create
+
+  # GCP configuration
+  gcpBillingAccount:
+    type: string
+    secret: true
+    description: GCP billing account ID
+
+  gcpOrganizationId:
+    type: string
+    description: GCP organization ID (optional)
+
+  # Firebase services to enable
+  enableAuth:
+    type: boolean
+    default: true
+
+  enableFirestore:
+    type: boolean
+    default: true
+
+  enableFunctions:
+    type: boolean
+    default: true
+
+  enableStorage:
+    type: boolean
+    default: true
+
+  enableHosting:
+    type: boolean
+    default: false
+
+  # GitHub configuration
+  githubRepo:
+    type: string
+    description: GitHub repository (owner/repo)
+
+  githubToken:
+    type: string
+    secret: true
+    description: GitHub personal access token
+
+  # App configuration
+  androidPackageName:
+    type: string
+    description: Android package name base
+
+  iosBundleId:
+    type: string
+    description: iOS bundle ID base
+
+  # Regions
+  firebaseFunctionsRegion:
+    type: string
+    default: "europe-west1"
+
+  firestoreRegion:
+    type: string
+    default: "eur3"

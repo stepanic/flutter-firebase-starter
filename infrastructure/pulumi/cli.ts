@@ -71,12 +71,28 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
 }
 
 async function deploy(options: DeployOptions): Promise<void> {
-  const stackName = `${options.projectBaseName}-infra`;
+  const baseStackName = `${options.projectBaseName}-infra`;
   const workDir = path.join(__dirname);
 
-  console.log(`\n🚀 Starting deployment for stack: ${stackName}\n`);
+  console.log(`\n🚀 Starting deployment for stack: ${baseStackName}\n`);
+  console.log('🔍 Detecting Pulumi backend...');
 
   try {
+    // Get current Pulumi user to construct proper stack name
+    const { execSync } = require('child_process');
+    let pulumiUser = '';
+    try {
+      pulumiUser = execSync('pulumi whoami', { encoding: 'utf-8' }).trim();
+      console.log(`   └─ Logged in as: ${pulumiUser}`);
+    } catch (err) {
+      console.error('❌ Not logged into Pulumi. Please run: pulumi login');
+      process.exit(1);
+    }
+
+    // Construct full stack name with user/org
+    const stackName = `${pulumiUser}/${baseStackName}`;
+    console.log(`   └─ Full stack name: ${stackName}\n`);
+
     // Create or select stack using the working directory (where Pulumi.yaml exists)
     const stack = await LocalWorkspace.createOrSelectStack({
       stackName,

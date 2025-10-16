@@ -94,37 +94,40 @@ const githubSecrets = setupGitHubSecrets({
 // Export outputs
 // ============================================================================
 
+// Build exports dynamically
+const firebaseOutputs: Record<string, any> = {};
+
 // Firebase project IDs
 for (const env of environments) {
-  pulumi.export(`firebase_project_id_${env}`, firebaseEnvironments[env].projectId);
-  pulumi.export(`firebase_project_number_${env}`, firebaseEnvironments[env].projectNumber);
-  pulumi.export(`firebase_web_api_key_${env}`, firebaseEnvironments[env].webApiKey);
+  firebaseOutputs[`firebase_project_id_${env}`] = firebaseEnvironments[env].projectId;
+  firebaseOutputs[`firebase_project_number_${env}`] = firebaseEnvironments[env].projectNumber;
+  firebaseOutputs[`firebase_web_api_key_${env}`] = firebaseEnvironments[env].webApiKey;
 }
 
 // Service accounts
 for (const env of environments) {
-  pulumi.export(`service_account_email_${env}`, firebaseEnvironments[env].serviceAccountEmail);
-  pulumi.export(`service_account_key_${env}`, pulumi.secret(firebaseEnvironments[env].serviceAccountKey));
+  firebaseOutputs[`service_account_email_${env}`] = firebaseEnvironments[env].serviceAccountEmail;
+  firebaseOutputs[`service_account_key_${env}`] = pulumi.secret(firebaseEnvironments[env].serviceAccountKey);
 }
 
 // Configuration files (base64 encoded for GitHub secrets)
 for (const env of environments) {
-  pulumi.export(`google_services_json_${env}`, pulumi.secret(firebaseEnvironments[env].googleServicesJson));
-  pulumi.export(`google_services_plist_${env}`, pulumi.secret(firebaseEnvironments[env].googleServicesPlist));
+  firebaseOutputs[`google_services_json_${env}`] = pulumi.secret(firebaseEnvironments[env].googleServicesJson);
+  firebaseOutputs[`google_services_plist_${env}`] = pulumi.secret(firebaseEnvironments[env].googleServicesPlist);
 }
 
-// Android signing
-export const androidKeystore = pulumi.secret(androidSigning.keystoreBase64);
-export const androidKeystorePassword = pulumi.secret(androidSigning.keystorePassword);
-export const androidKeyPassword = pulumi.secret(androidSigning.keyPassword);
-export const androidKeyAlias = androidSigning.keyAlias;
-
-// GitHub secrets status
-export const githubSecretsConfigured = githubSecrets.secretsConfigured;
-
-// Summary
-export const summary = pulumi.interpolate`
-🎉 Firebase Infrastructure Created Successfully!
+// Export all outputs using module.exports for proper Pulumi export
+module.exports = {
+  ...firebaseOutputs,
+  // Android signing
+  androidKeystore: pulumi.secret(androidSigning.keystoreBase64),
+  androidKeystorePassword: pulumi.secret(androidSigning.keystorePassword),
+  androidKeyPassword: pulumi.secret(androidSigning.keyPassword),
+  androidKeyAlias: androidSigning.keyAlias,
+  // GitHub secrets status
+  githubSecretsConfigured: githubSecrets.secretsConfigured,
+  // Summary
+  summary: pulumi.interpolate`🎉 Firebase Infrastructure Created Successfully!
 
 📦 Projects Created:
 ${environments.map(env => `   - ${projectBaseName}-${env}`).join('\n')}
@@ -154,5 +157,5 @@ Next Steps:
 3. Run: flutter run --flavor dev
 4. Push to GitHub to trigger CI/CD!
 
-🚀 You're ready to start building!
-`;
+🚀 You're ready to start building!`
+};

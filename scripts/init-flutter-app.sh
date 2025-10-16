@@ -605,29 +605,40 @@ EOGITIGNORE
 
 print_success ".gitignore created"
 
-# Create GitHub repository
-print_step "Creating GitHub repository..."
+# Create GitHub repository or connect to existing
+print_step "Setting up GitHub repository..."
 
-if gh repo view "$GITHUB_REPO" &>/dev/null; then
+REPO_EXISTS=false
+if gh repo view "$GITHUB_REPO" &>/dev/null 2>&1; then
+    REPO_EXISTS=true
     print_warning "Repository $GITHUB_REPO already exists"
+fi
 
-    # Check if remote already exists
-    if git remote get-url origin &>/dev/null; then
-        print_info "Git remote 'origin' already configured"
-    else
-        print_step "Adding existing repository as remote..."
-        gh repo set-default "$GITHUB_REPO"
-        git remote add origin "git@github.com:$GITHUB_REPO.git"
-        print_success "Remote added"
-    fi
+# Check if remote already exists
+if git remote get-url origin &>/dev/null 2>&1; then
+    print_info "Git remote 'origin' already configured"
+    CURRENT_REMOTE=$(git remote get-url origin)
+    print_info "Current remote: $CURRENT_REMOTE"
 else
-    # Create new repository
-    if gh repo create "$GITHUB_REPO" --public --source=. --remote=origin; then
-        print_success "GitHub repository created"
+    # Add remote
+    print_step "Adding GitHub remote..."
+    if git remote add origin "git@github.com:$GITHUB_REPO.git" 2>/dev/null; then
+        print_success "Remote added: git@github.com:$GITHUB_REPO.git"
+    elif git remote add origin "https://github.com/$GITHUB_REPO.git" 2>/dev/null; then
+        print_success "Remote added: https://github.com/$GITHUB_REPO.git"
     else
-        print_error "Failed to create GitHub repository"
-        print_info "You can create it manually and add remote:"
-        print_info "  git remote add origin git@github.com:$GITHUB_REPO.git"
+        print_error "Failed to add remote"
+    fi
+fi
+
+# Create repo if it doesn't exist
+if [[ "$REPO_EXISTS" == "false" ]]; then
+    print_step "Creating GitHub repository..."
+    if gh repo create "$GITHUB_REPO" --public --description "$DESCRIPTION" 2>/dev/null; then
+        print_success "GitHub repository created: https://github.com/$GITHUB_REPO"
+    else
+        print_warning "Could not create repository automatically"
+        print_info "You can create it manually at: https://github.com/new"
     fi
 fi
 

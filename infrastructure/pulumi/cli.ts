@@ -74,9 +74,21 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
 
   // Now manually write the environments array to the stack config file as proper YAML array
   const yaml = require('js-yaml');
-  const stackConfigFile = path.join(stack.workspace.workDir, `Pulumi.${stack.name}.yaml`);
+  // Stack name contains '/' so we need to find the actual config file
+  // It's stored in the .pulumi directory or as Pulumi.{simplename}.yaml
+  const simpleStackName = stack.name.includes('/') ? stack.name.split('/')[1] : stack.name;
+  const stackConfigFile = path.join(stack.workspace.workDir, `Pulumi.${simpleStackName}.yaml`);
+
+  console.log(`   └─ Writing to: ${stackConfigFile}`);
 
   try {
+    // Check if file exists, if not wait for setAllConfig to create it
+    if (!fs.existsSync(stackConfigFile)) {
+      console.log('   └─ Stack config file not yet created, waiting...');
+      // Give it a moment to be created by setAllConfig
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
     // Read existing config
     const configYaml = fs.readFileSync(stackConfigFile, 'utf8');
     const configData: any = yaml.load(configYaml) || { config: {} };
@@ -86,7 +98,7 @@ async function configureStack(stack: Stack, options: DeployOptions): Promise<voi
 
     // Write back
     fs.writeFileSync(stackConfigFile, yaml.dump(configData, { indent: 2 }));
-    console.log('   └─ Environments array written to stack config');
+    console.log('   └─ Environments array written as YAML array');
   } catch (err) {
     console.error('Failed to write environments to stack config:', err);
     throw err;

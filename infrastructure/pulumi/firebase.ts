@@ -379,7 +379,7 @@ service firebase.storage {
   return {
     projectId: project.projectId,
     projectNumber: project.number,
-    webApiKey: webConfig.stdout.apply((config) => {
+    webApiKey: webConfig.stdout.apply((config): string => {
       try {
         const parsed = JSON.parse(config);
         return parsed.sdkConfig?.apiKey || "";

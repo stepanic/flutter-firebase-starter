@@ -393,7 +393,10 @@ if [[ "$USE_IAC" == "true" ]]; then
     # Set configuration
     pulumi config set projectBaseName "$FIREBASE_PROJECT_BASE"
     pulumi config set organization "$ORGANIZATION"
-    pulumi config set environments '["dev","staging","prod"]'
+
+    # Set environments as JSON array
+    echo '["dev","staging","prod"]' | pulumi config set environments --
+
     pulumi config set githubRepo "$GITHUB_REPO"
     pulumi config set androidPackageName "${ORGANIZATION}.${PROJECT_NAME}"
     pulumi config set iosBundleId "${ORGANIZATION}.${PROJECT_NAME}"

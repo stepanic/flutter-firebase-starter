@@ -221,7 +221,13 @@ print_step "Configuring Pulumi stack..."
 # Required configs
 pulumi config set projectBaseName "$FIREBASE_PROJECT_BASE"
 pulumi config set organization "$ORGANIZATION"
-pulumi config set environments "[\"$(echo $ENVIRONMENTS | sed 's/,/","/g')\"]"
+
+# Set environments as JSON array
+# Convert comma-separated to proper JSON array
+IFS=',' read -ra ENV_ARRAY <<< "$ENVIRONMENTS"
+ENVS_JSON=$(printf '%s\n' "${ENV_ARRAY[@]}" | jq -R . | jq -s -c .)
+echo "$ENVS_JSON" | pulumi config set environments --
+
 pulumi config set githubRepo "$GITHUB_REPO"
 pulumi config set androidPackageName "$ANDROID_PACKAGE"
 pulumi config set iosBundleId "$IOS_BUNDLE"

@@ -35,37 +35,41 @@ interface DeployOptions {
 async function configureStack(stack: Stack, options: DeployOptions): Promise<void> {
   console.log('⚙️  Configuring stack...');
 
-  // Required configurations
-  await stack.setConfig('projectBaseName', { value: options.projectBaseName });
-  await stack.setConfig('organization', { value: options.organization });
-  await stack.setConfig('environments', { value: JSON.stringify(options.environments) });
-  await stack.setConfig('githubRepo', { value: options.githubRepo });
-  await stack.setConfig('androidPackageName', { value: options.androidPackageName });
-  await stack.setConfig('iosBundleId', { value: options.iosBundleId });
+  // Build complete config object
+  // The config keys are namespaced with the project name from Pulumi.yaml
+  const projectName = 'firebase-infrastructure';
 
-  // Optional configurations
+  const allConfig: Record<string, { value: string; secret?: boolean }> = {
+    [`${projectName}:projectBaseName`]: { value: options.projectBaseName },
+    [`${projectName}:organization`]: { value: options.organization },
+    [`${projectName}:environments`]: { value: JSON.stringify(options.environments) },
+    [`${projectName}:githubRepo`]: { value: options.githubRepo },
+    [`${projectName}:androidPackageName`]: { value: options.androidPackageName },
+    [`${projectName}:iosBundleId`]: { value: options.iosBundleId },
+    [`${projectName}:firestoreRegion`]: { value: options.firestoreRegion || 'eur3' },
+    [`${projectName}:firebaseFunctionsRegion`]: { value: options.firebaseFunctionsRegion || 'europe-west1' },
+    [`${projectName}:enableAuth`]: { value: String(options.enableAuth !== false) },
+    [`${projectName}:enableFirestore`]: { value: String(options.enableFirestore !== false) },
+    [`${projectName}:enableFunctions`]: { value: String(options.enableFunctions !== false) },
+    [`${projectName}:enableStorage`]: { value: String(options.enableStorage !== false) },
+    [`${projectName}:enableHosting`]: { value: String(options.enableHosting || false) },
+  };
+
+  // Add optional configs
   if (options.gcpBillingAccount) {
-    await stack.setConfig('gcpBillingAccount', { value: options.gcpBillingAccount, secret: true });
+    allConfig[`${projectName}:gcpBillingAccount`] = { value: options.gcpBillingAccount, secret: true };
   }
 
   if (options.gcpOrganizationId) {
-    await stack.setConfig('gcpOrganizationId', { value: options.gcpOrganizationId });
+    allConfig[`${projectName}:gcpOrganizationId`] = { value: options.gcpOrganizationId };
   }
 
   if (options.githubToken) {
-    await stack.setConfig('githubToken', { value: options.githubToken, secret: true });
+    allConfig[`${projectName}:githubToken`] = { value: options.githubToken, secret: true };
   }
 
-  // Regional settings
-  await stack.setConfig('firestoreRegion', { value: options.firestoreRegion || 'eur3' });
-  await stack.setConfig('firebaseFunctionsRegion', { value: options.firebaseFunctionsRegion || 'europe-west1' });
-
-  // Feature flags
-  await stack.setConfig('enableAuth', { value: String(options.enableAuth !== false) });
-  await stack.setConfig('enableFirestore', { value: String(options.enableFirestore !== false) });
-  await stack.setConfig('enableFunctions', { value: String(options.enableFunctions !== false) });
-  await stack.setConfig('enableStorage', { value: String(options.enableStorage !== false) });
-  await stack.setConfig('enableHosting', { value: String(options.enableHosting || false) });
+  // Set all config at once
+  await stack.setAllConfig(allConfig);
 
   console.log('✅ Stack configured');
 }

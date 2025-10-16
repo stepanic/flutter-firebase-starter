@@ -19,15 +19,17 @@ config:
     default: ["dev", "staging", "prod"]
     description: List of environments to create
 
-  # GCP configuration
+  # GCP configuration (optional)
   gcpBillingAccount:
     type: string
     secret: true
-    description: GCP billing account ID
+    description: GCP billing account ID (optional)
+    default: ""
 
   gcpOrganizationId:
     type: string
     description: GCP organization ID (optional)
+    default: ""
 
   # Firebase services to enable
   enableAuth:
